@@ -23,6 +23,54 @@ test("ActionGuard accepts bounded actions and rejects malformed coordinates", ()
 		assert.throws(() => validateAction(action, 100, 100));
 });
 
+test("first abort cause is retained after both timer and parent have aborted", async () => {
+	const bytes = Buffer.from(
+		"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+		"base64",
+	);
+	const originalFetch = globalThis.fetch;
+	globalThis.fetch = async (_input, init) =>
+		new Promise<Response>((_resolve, reject) => {
+			const signal = init?.signal;
+			signal?.addEventListener(
+				"abort",
+				() => setTimeout(() => reject(new Error("aborted")), 60),
+				{ once: true },
+			);
+		});
+	const input = {
+		frameId: "frame-abort-race",
+		goal: "Click the visible pixel",
+		image: { bytes, width: 1, height: 1 },
+	};
+	try {
+		const vision = createOllamaVision();
+		const timerFirstParent = new AbortController();
+		const laterParent = setTimeout(() => timerFirstParent.abort(), 30);
+		const timed = await vision.proposeAction(input, {
+			timeoutMs: 10,
+			signal: timerFirstParent.signal,
+		});
+		clearTimeout(laterParent);
+		assert.equal(timerFirstParent.signal.aborted, true);
+		assert.equal(timed.ok, false);
+		if (!timed.ok) assert.equal(timed.error.code, "timeout");
+
+		const parentFirst = new AbortController();
+		const earlierParent = setTimeout(() => parentFirst.abort(), 5);
+		const cancelled = await vision.proposeAction(input, {
+			timeoutMs: 40,
+			signal: parentFirst.signal,
+		});
+		clearTimeout(earlierParent);
+		assert.equal(parentFirst.signal.aborted, true);
+		assert.equal(cancelled.ok, false);
+		if (!cancelled.ok) assert.equal(cancelled.error.code, "cancelled");
+	} finally {
+		globalThis.fetch = originalFetch;
+	}
+});
+
 test("Ollama adapter associates the frame and parses a real envelope", async () => {
 	const bytes = Buffer.from(
 		"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
@@ -32,6 +80,8 @@ test("Ollama adapter associates the frame and parses a real envelope", async () 
 	globalThis.fetch = async (_input, init) => {
 		const body = JSON.parse(String(init?.body));
 		assert.equal(body.format.oneOf[0].properties.x.maximum, 0);
+		assert.equal(body.format.oneOf[1].properties.evidence.maxLength, 500);
+		assert.equal(body.format.oneOf[2].properties.reason.maxLength, 500);
 		assert.equal(body.messages[1].images[0], bytes.toString("base64"));
 		return Response.json({
 			model: "qwen3-vl:2b",

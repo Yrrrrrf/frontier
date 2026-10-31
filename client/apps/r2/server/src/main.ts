@@ -1,9 +1,53 @@
+import { fileURLToPath } from "node:url";
 import { createAgentServer } from "./http.ts";
+import {
+	createDesktopTaskRunner,
+	createLocalReadiness,
+	loginNoVnc,
+} from "./runner.ts";
+import { createOllamaVision } from "./vision.ts";
+import { MemoryTraceSink } from "./trace.ts";
 
 const token = process.env.TEAM_TOKEN;
 if (!token) throw new Error("TEAM_TOKEN must be configured");
 const port = Number(process.env.PORT ?? 3000);
-const { server } = createAgentServer({ token });
+if (!Number.isInteger(port) || port < 0 || port > 65_535)
+	throw new Error("PORT must be a valid TCP port");
+const baseUrl = process.env.OLLAMA_BASE_URL ?? "http://127.0.0.1:11434";
+const model = process.env.VISION_MODEL ?? "qwen3-vl:2b";
+const executablePath = process.env.CHROMIUM_EXECUTABLE;
+const uiOrigins = (
+	process.env.FRONTIER_UI_ORIGINS ??
+	"http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:4173,http://localhost:4173"
+)
+	.split(",")
+	.map((origin) => origin.trim())
+	.filter(Boolean);
+const readiness = createLocalReadiness({
+	baseUrl,
+	model,
+	...(executablePath ? { executablePath } : {}),
+});
+const traces = new MemoryTraceSink({
+	directory: fileURLToPath(new URL("../artifacts/traces/", import.meta.url)),
+});
+const runner = createDesktopTaskRunner({
+	vision: createOllamaVision({ baseUrl, model }),
+	login: loginNoVnc,
+	model,
+	...(executablePath ? { executablePath } : {}),
+});
+const { server } = createAgentServer({
+	token,
+	runner,
+	readiness: readiness.isReady,
+	trace: traces,
+	model,
+	uiOrigins,
+});
+readiness.start();
+void readiness.refresh();
+server.on("close", () => readiness.stop());
 server.listen(port, "0.0.0.0", () => {
 	console.log(`Frontier agent listening on port ${port}`);
 });

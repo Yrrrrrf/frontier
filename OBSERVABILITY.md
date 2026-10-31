@@ -1,213 +1,230 @@
 # FRONTIER AGENT — TRACE THE JOINTS
 
-Purpose: make failures answer **“which boundary broke, on which task/iteration, after how long, and what was the last confirmed effect?”** This is an instrumentation plan, not another validation suite and not a claim that tracing is already implemented.
+**Status: implemented as a local development observability slice.** The system records sanitized per-task traces and displays them in the r2 dashboard. This is not a monitoring service, proof of real desktop execution, or a replacement for task validation.
 
-## 1. One trace per task
+Purpose: make failures answer **“which boundary broke, on which task/iteration, after how long, and what was the last confirmed effect?”**
 
-Use one small structured event stream per `task_id`. Correlate events with:
+## 1. Current implementation
+
+| Component | Current responsibility |
+| --- | --- |
+| `client/apps/r2/server/src/trace.ts` | `TraceSink`, bounded memory, sanitization, JSONL persistence, and task summaries |
+| `client/apps/r2/server/src/http.ts` | HTTP/admission events and authenticated `GET /tasks/{task_id}/trace` |
+| `client/apps/r2/server/src/service.ts` | Registration, runner, terminal, late-result, and task-timing events |
+| `client/apps/r2/server/src/runner.ts` | Desktop, capture, inference, action/guard, input/effect, closure, and cleanup events |
+| `client/sdk/core/src/schemas/frontier.ts` | Read-only trace DTO types, separate from official task result DTOs |
+| `client/apps/r2/src/lib/observability.ts` | Authenticated trace loading, URL/payload checks, and display helpers |
+| `client/apps/r2/src/routes/+page.svelte` | Live dashboard, polling, timeline, metadata, timings, counters, and errors |
+
+The official `GET /health`, `POST /tasks`, and `GET /tasks/{task_id}` contracts are unchanged. The trace route is an additional authenticated development endpoint.
+
+## 2. Event and metadata model
+
+Each task has one structured event stream. Events use the server's monotonic clock, shared with deadline calculations:
 
 ```ts
 type TraceEvent = {
   taskId: string;
   iteration: number;
   event: string;
-  atMs: number;             // performance.now(); same monotonic clock as the deadline
+  atMs: number;
   durationMs?: number;
   frameId?: string;
   actionId?: string;
   status: "started" | "ok" | "rejected" | "failed";
-  details?: Record<string, unknown>; // small, sanitized, predefined fields only
+  details?: Record<string, unknown>;
 };
 ```
 
-Keep `run_id`, model tag/settings, server version and viewport in run metadata. Use wall-clock timestamps only for report metadata; calculate budgets and durations with the monotonic clock.
+Run metadata includes `taskId`, `runId`, creation time, reception/deadline/acceptance/terminal times, final state, server version, requested model and settings, viewport, event counts, and the local trace-file reference. Wall-clock time is used only for report metadata such as `createdAt` and the dashboard's last-refresh display.
 
-Start with a bounded in-memory buffer plus one sanitized JSONL report per task. Do not add a monitoring service yet. Store screenshots as files and reference their path/hash; never place base64 images, passwords, Bearer tokens or full sensitive responses in events.
+Defaults in `MemoryTraceSink`:
 
-## 2. The important joints
+- Up to **500 retained events per task** and **100 in-memory task traces**.
+- `eventCount` counts all observed events; `droppedEvents` counts entries evicted from the per-task memory buffer.
+- `get()` returns defensive copies so UI consumers cannot mutate the stored trace.
+- Persistence is observational and does not block task execution.
+
+## 3. Instrumented boundaries
 
 ### A. HTTP request → registered task
 
-Events:
+Core events:
 
 - `http.received`
 - `auth.checked`
+- `request.body.parsed`
 - `request.validated`
 - `task.registered`
 - `task.accepted`
 
-Measure authentication/body parsing/registration separately and total **POST acceptance latency**. Record the deadline established at reception. A slow browser or Ollama call must appear in background execution, never in POST latency.
-
-Failure questions answered: wrong DTO, bad token, task not registered, or acceptance over two seconds?
+The trace records authentication/body/validation/registration timings and total POST acceptance latency. The deadline starts at HTTP reception; desktop and Ollama work remain in background execution.
 
 ### B. Registered task → desktop session
 
-Events:
+Core events:
 
 - `runner.started`
+- `runner.failed`
 - `desktop.connect.started`
 - `desktop.login.ok`
 - `desktop.session.ready`
 - `desktop.closed`
 
-Measure connection, authentication and first usable frame separately. Record viewer/driver type and session ID, never the password.
-
-Failure questions answered: network, viewer login, browser runtime, VNC session, or initialization timeout?
+Connection attempts, driver type, elapsed time, and sanitized failures are recorded without desktop credentials.
 
 ### C. Desktop session → trustworthy frame
 
-Events:
+Core events:
 
 - `capture.started`
 - `capture.ok`
 - `capture.rejected`
 
-Record `frameId`, actual width/height, capture latency and a short image hash. Optionally record a pixel-change ratio against the previous frame.
-
-Failure questions answered: stale/blank image, wrong dimensions, noVNC overlays, capture failure, or unchanged screen after an action?
+Successful captures include `frameId`, actual dimensions, latency, a short image hash, attempt number, and whether the previous hash repeated. A repeated frame is a signal for investigation, not proof that input failed.
 
 ### D. Frame + goal → Ollama response
 
-Events:
+Core events:
 
 - `inference.queued`
 - `inference.started`
 - `inference.response`
 - `inference.failed`
 
-Record requested/reported model, timeout remaining, image hash, cold/warm/contended condition, elapsed time, `load_duration`, prompt evaluation, generation duration and token counts. Sample `ollama ps`/VRAM outside the inference critical path when needed.
+The runner records attempts, remaining timeout, image hash, requested/reported model, elapsed/load/prompt/generation durations, and token counts when Ollama supplies them. Current traces do not continuously sample GPU/VRAM or independently certify cold/warm/contended conditions.
 
-Failure questions answered: daemon unavailable, model missing, request timeout, GPU contention, slow load, slow prompt processing, or slow generation?
+### E. Raw response → proposed action
 
-### E. Raw model response → proposed action
-
-Events:
+Core events:
 
 - `response.parsed`
 - `action.proposed`
 - `action.rejected`
 
-Record content length, parse/schema error code, action kind and coordinates; retain only a bounded sanitized diagnostic snippet on failure.
-
-Failure questions answered: invalid envelope, malformed JSON, truncated output, unknown kind, extra fields, non-integer/out-of-bounds coordinates, or a valid but semantically wrong target?
-
-Keep these categories separate: **valid JSON is not visual correctness**.
+Failures distinguish invalid envelopes from invalid actions. Diagnostics are bounded and sanitized. **Valid JSON is not visual correctness.**
 
 ### F. Proposed action → authorized side effect
 
-Events:
+Core events:
 
 - `guard.started`
 - `guard.ok`
 - `guard.rejected`
 - `side_effect.before`
 
-Check and record current task state, remaining budget, expected/current `frameId`, coordinate transformation and destination bounds. `side_effect.before` is the final checkpoint before a click/write.
-
-Failure questions answered: stale frame, late inference, expired task, terminal task reopened, bad geometry, or invalid target?
-
-There must be no `input.executed` without a preceding successful guard and `side_effect.before` for the same `actionId`.
+The runner correlates `actionId` and source `frameId`, checks task activity/budget, reobserves the desktop, compares frame hash and geometry, and records the final checkpoint before input. An uncertain or stale proposal is not executed blindly.
 
 ### G. Controller input → visible effect
 
-Events:
+Core events:
 
 - `input.executed`
 - `repaint.waited`
 - `effect.observed`
 - `effect.unknown`
 
-Record action/wait latency, the new frame ID/hash and pixel-change information. Keep three claims distinct:
+These claims remain distinct:
 
-1. Input was sent.
-2. The screen changed.
-3. The requested application effect was verified.
+1. Input was sent, rejected, or its application became uncertain.
+2. The post-frame hash changed.
+3. A separate visual proposal verified the requested postcondition.
 
-Failure questions answered: click ignored, coordinate missed, insufficient hold/wait, unexpected dialog, browser disconnect, or visible but wrong effect?
+A trace event alone never proves the third claim; the next real acceptance run must retain actual before/after evidence.
 
-### H. Observations → completion or failure
+### H. Completion, failure, and cleanup
 
-Events:
+Core events:
 
 - `closure.proposed`
 - `closure.verified`
+- `iteration.completed`
 - `task.terminal`
 - `late_result.discarded`
 - `cleanup.ok`
+- `cleanup.failed`
 
-Record the objective evidence used, final state, summary length, secret-redaction result, total duration, iteration count and cleanup outcome. Once terminal, any later proposal must produce `late_result.discarded` and no input event.
+Terminal metadata includes final state, total monotonic task duration, summary length, and redaction status. A terminal result cannot be reopened by late work or cleanup.
 
-Failure questions answered: model falsely claimed success, verification failed, deadline expired, summary leaked sensitive data, session did not close, or late work touched the next task?
+## 4. Dashboard and authenticated reads
 
-## 3. Minimal event sequence for the next real click
+Open the r2 app, then enter:
 
-A healthy Comercial smoke run should look conceptually like:
+- Agent URL, default `http://127.0.0.1:3000`.
+- Team Bearer token.
+- Existing task ID returned by `POST /tasks`.
+
+The dashboard requests `GET /tasks/{task_id}/trace` with the same Bearer credential and polls every 1.2 seconds while the task is open. Polling stops at a terminal state; manual refresh remains available. Credentials are held only in component memory and are not written to URLs, `localStorage`, or `sessionStorage`.
+
+The dashboard exposes:
+
+- Current/terminal state and observed task duration.
+- Last confirmed stage and first failed/rejected boundary.
+- Newest-first event timeline with iteration, offset, duration, frame/action IDs, and expandable sanitized details.
+- Inference calls, retries, invalid proposals, repeated frames, late responses, and input/output tokens.
+- Run/model/viewport/server metadata, per-event durations, and evidence paths.
+- Explicit loading, refresh, unauthorized, not-found, malformed-payload, and network/CORS errors.
+
+The displayed duration is reception-to-terminal for closed tasks and reception-to-latest-event for open tasks. The UI does not invent a completion percentage.
+
+## 5. Persistence and redaction
+
+With the production `main.ts` composition, each task writes sanitized JSONL under:
+
+```text
+client/apps/r2/server/artifacts/traces/
+```
+
+Filenames contain a truncated SHA-256 hash of the task ID, not desktop information. The artifact directory is ignored by Git. Traces are in-memory for API reads; server restart does not reload JSONL into the task service, and there is no trace-list/search service.
+
+Protection currently includes:
+
+- Per-task registration of desktop password and desktop URL without storing those values in metadata.
+- Replacement of registered secrets before event persistence.
+- Bearer-token and URL redaction, sensitive-key removal, bounded strings/collections, and bounded diagnostic details.
+- No screenshot bytes or base64 image fields in trace events.
+
+Evidence paths are references only. Current runner captures are used in memory; real before/after screenshot evidence remains part of the next acceptance gate.
+
+## 6. Browser CORS
+
+The dashboard uses direct authenticated browser requests. The Node server responds to CORS only for explicitly configured origins. Defaults cover localhost and 127.0.0.1 on ports 5173 and 4173. Another deployment must set:
+
+```sh
+FRONTIER_UI_ORIGINS=https://r2.example.com
+```
+
+Multiple origins are comma-separated. Preflight requests from unlisted origins receive 403, and actual task/trace routes still require Bearer authentication.
+
+## 7. Expected sequence for the next real click
+
+A healthy Comercial smoke run should contain the relevant subsequence:
 
 ```text
 task.registered
-desktop.session.ready             + session time
+desktop.session.ready
 capture.ok                        frame=A
-inference.response                + model stages
+inference.response
 action.proposed                   click(x,y), frame=A
-guard.ok                          remaining budget
+guard.ok
 side_effect.before                action=N
 input.executed                    action=N
-repaint.waited                    + 1 s
+repaint.waited
 capture.ok                        frame=B
-effect.observed                   A → B, visible menu evidence
+effect.observed                   A → B; screen changed
+closure.verified                 separate visual postcondition check
 task.terminal
 cleanup.ok
 ```
 
-The first missing or failed event localizes the investigation immediately. Do not restart the whole pipeline blindly when only one boundary is broken.
+The first missing/failed boundary localizes investigation. This sequence is currently a **validation target**, not a claim that a real click has already run.
 
-## 4. Per-iteration and per-task timings
+## 8. Current validation and limits
 
-Record these durations explicitly:
+Current local evidence:
 
-- `accept_ms`: HTTP reception → ID response.
-- `session_ms`: runner start → first usable frame.
-- `capture_ms`: capture start → validated frame.
-- `inference_ms`: Ollama request start → parsed envelope.
-- `guard_ms`: proposal → side-effect authorization.
-- `input_ms`: mouse/key start → input completion.
-- `effect_ms`: input completion → new observation.
-- `iteration_ms`: capture start → next capture/terminal decision.
-- `task_ms`: request reception → terminal state.
-- `cleanup_ms`: terminal decision → resources released.
+- Server TypeScript and **30/30 Node tests PASS**, including trace redaction, bounds, JSONL, authenticated reads, CORS, lifecycle, runner, and Ollama transport behavior.
+- Client `just cycle` PASS, including r2 helper tests, type checks, lint, and production build.
+- Real desktop click, full task execution, E1, deployment, and unseen-app generalization remain **NOT_RUN**.
 
-Also count iterations, inference calls, retries, invalid proposals, wrong clicks, repeated frames and late responses. Reserve remaining-budget snapshots at every blocking operation; retries must never reset the five-minute deadline.
-
-## 5. Performance evidence without misleading numbers
-
-After functional tracing works, run controlled comparisons on identical real frames/tasks:
-
-- Separate initial model load from warm inference.
-- Record sample size, model digest/settings, image dimensions and GPU contention.
-- Report p50/p95 only with the sample count; small smoke runs remain descriptive.
-- Compare successful-task rate and false completions alongside latency. A faster wrong click is not an improvement.
-- Track end-to-end task time and deadline compliance, not only tokens/second.
-- Measure sequential model candidates in an uncontended window where possible; do not kill another worker's model to manufacture a cold run.
-
-Useful first comparisons: 2B versus a justified alternative, prompt/history size, image geometry, and wait/retry policy. Change one variable at a time.
-
-## 6. Failure-indexed report
-
-Each terminal report should expose a compact summary:
-
-```text
-task / run / final state
-last confirmed stage
-first failed or rejected stage
-last successful frame/action
-total and per-stage timings
-retry/invalid-action/late-response counts
-sanitized error code and smallest next investigation
-evidence paths
-```
-
-This makes monitoring useful during development: transport teams inspect session/capture events, vision work inspects inference/parse/grounding events, and runner work inspects guard/effect/closure events. The boundaries remain observable without coupling the components together.
-
-## 7. Smallest implementation step later
-
-Add one `TraceSink` consumed by the existing HTTP service, desktop driver, vision adapter and future TaskRunner. Start with the event names above and JSONL output under ignored `client/apps/r2/server/artifacts/traces/`. Instrument the real Comercial click first; add dashboards, metrics servers or distributed tracing only if the local reports demonstrate a need.
+Do not add dashboards, distributed tracing, percentile performance claims, or monitoring infrastructure as a substitute for that real acceptance evidence. After a real run works, compare identical frames/tasks one variable at a time and report sample counts alongside latency and successful-task/false-completion rates.
