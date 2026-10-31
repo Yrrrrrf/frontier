@@ -1,0 +1,8 @@
+# CREDENTIALS
+
+- ESCRITORIO NOVNC CON LA APP DE PRUEBAS:
+  `https://frontier-r1-tm28-production.up.railway.app/`
+- password: `e6107d16`
+- TOKEN DEL ESCRITORIO · /__RESET Y /__CHECK:
+  `cd653f516f71812621a20faae54ae25535613b1b`
+- TOKEN DEL EQUIPO · ENTRYPOINT: `ftr_c8195036a6a7e00ba00851d3cb38edb3`
