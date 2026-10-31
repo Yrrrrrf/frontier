@@ -5,7 +5,7 @@ Run from the real repository. Use environment variables for credentials; do not 
 ## Fast checks
 
 ```sh
-cd server
+cd client/apps/r2/server
 npm install
 npm run validate
 ```
@@ -28,23 +28,23 @@ Required environment:
 - `CHROMIUM_EXECUTABLE`: optional browser path; required on this NixOS host when using the Nix Chromium wrapper.
 
 ```sh
-cd server
+cd client/apps/r2/server
 npm run validate:desktop
 ```
 
-PASS means real authentication succeeded and the raw remote canvas is 1280×800. Evidence is written to ignored `server/artifacts/desktop-login.png`.
+PASS means real authentication succeeded and the raw remote canvas is 1280×800. Evidence is written to ignored `client/apps/r2/server/artifacts/desktop-login.png`.
 
 ## Real Ollama vision probe
 
 First ensure Ollama is reachable and `qwen3-vl:2b` is installed. With the same desktop environment plus optional `VISION_MODEL` and `VISION_RUNS` (default 3):
 
 ```sh
-cd server
+cd client/apps/r2/server
 npm run validate:vision
 ollama ps
 ```
 
-The command performs a fresh real login/capture, asks the model to click Comercial three times, and checks each proposal against an independently marked target rectangle. It does not click. Evidence: `server/artifacts/vision-sigecom.png` and `server/artifacts/vision-report.json`.
+The command performs a fresh real login/capture, asks the model to click Comercial three times, and checks each proposal against an independently marked target rectangle. It does not click. Evidence: `client/apps/r2/server/artifacts/vision-sigecom.png` and `client/apps/r2/server/artifacts/vision-report.json`.
 
 On this NixOS host, run either real validator through the working browser wrapper:
 

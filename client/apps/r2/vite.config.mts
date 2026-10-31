@@ -11,4 +11,9 @@ export default defineGWA({
 			}),
 		}) as PluginOption,
 	],
+	overrides: {
+		test: {
+			include: ["src/**/*.test.ts"],
+		},
+	},
 });

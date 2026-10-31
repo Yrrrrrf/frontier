@@ -12,25 +12,25 @@ Snapshot: 2026-10-31. This is the current implementation handoff. The official c
 
 ### Node server
 
-- `server/src/http.ts`: native `node:http`, Bearer authentication, official routes, and JSON validation.
-- `server/src/service.ts`: RAM task state, background execution boundary, monotonic task deadline, terminal-state protection, and password redaction.
+- `client/apps/r2/server/src/http.ts`: native `node:http`, Bearer authentication, official routes, and JSON validation.
+- `client/apps/r2/server/src/service.ts`: RAM task state, background execution boundary, monotonic task deadline, terminal-state protection, and password redaction.
 - The default runner deliberately returns `fallida` because the real agent loop is not connected yet. HTTP tests inject runners; those tests are control-flow evidence, not task-completion evidence.
 
 ### Real desktop transport
 
-- `server/src/vnc.ts`: Playwright controls only the noVNC viewer login and remote canvas. It never reads the target application's DOM.
+- `client/apps/r2/server/src/vnc.ts`: Playwright controls only the noVNC viewer login and remote canvas. It never reads the target application's DOM.
 - Real noVNC login and raw 1280×800 SIGECOM capture are proven.
 - `capture()` reads the remote canvas without noVNC overlays.
 - `click()` maps image coordinates to the canvas, holds for 120 ms, and waits one second. A real click has NOT yet been executed.
 
 ### Local vision
 
-- `server/src/vision.ts`: native-fetch Ollama `/api/chat` adapter using `qwen3-vl:2b` by default.
+- `client/apps/r2/server/src/vision.ts`: native-fetch Ollama `/api/chat` adapter using `qwen3-vl:2b` by default.
 - Internal actions: `click`, `finish`, and `fail` with a dynamic JSON Schema and explicit runtime guards.
 - Coordinates are integer pixels of the exact input PNG, origin top-left.
 - Frame identity is attached by our code. Timeout/cancellation, malformed responses, dimensions, extra fields, and coordinate bounds are checked.
 - Current inference settings: temperature 0, `num_ctx` 4096, `num_predict` 256.
-- `server/src/validate-vision.ts` performs a real login/capture and three inference proposals. It never executes the proposed click.
+- `client/apps/r2/server/src/validate-vision.ts` performs a real login/capture and three inference proposals. It never executes the proposed click.
 
 ## Observed evidence
 
@@ -45,15 +45,15 @@ Snapshot: 2026-10-31. This is the current implementation handoff. The official c
 
 Generated evidence is intentionally ignored by Git:
 
-- `server/artifacts/desktop-login.png`
-- `server/artifacts/vision-sigecom.png`
-- `server/artifacts/vision-report.json`
+- `client/apps/r2/server/artifacts/desktop-login.png`
+- `client/apps/r2/server/artifacts/vision-sigecom.png`
+- `client/apps/r2/server/artifacts/vision-report.json`
 
 No desktop password or team token belongs in source, reports, summaries, or committed screenshots containing secrets.
 
 ## Next gate
 
-Integrate `server/src/vision.ts` with the real desktop driver in a TaskRunner and perform one harmless real action:
+Integrate `client/apps/r2/server/src/vision.ts` with the real desktop driver in a TaskRunner and perform one harmless real action:
 
 1. Log in and capture a fresh frame.
 2. Ask for a click on Comercial.

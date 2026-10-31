@@ -210,4 +210,4 @@ This makes monitoring useful during development: transport teams inspect session
 
 ## 7. Smallest implementation step later
 
-Add one `TraceSink` consumed by the existing HTTP service, desktop driver, vision adapter and future TaskRunner. Start with the event names above and JSONL output under ignored `server/artifacts/traces/`. Instrument the real Comercial click first; add dashboards, metrics servers or distributed tracing only if the local reports demonstrate a need.
+Add one `TraceSink` consumed by the existing HTTP service, desktop driver, vision adapter and future TaskRunner. Start with the event names above and JSONL output under ignored `client/apps/r2/server/artifacts/traces/`. Instrument the real Comercial click first; add dashboards, metrics servers or distributed tracing only if the local reports demonstrate a need.
