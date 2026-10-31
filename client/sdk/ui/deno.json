@@ -1,0 +1,9 @@
+{
+	"name": "@sdk/ui",
+	"version": "0.0.1",
+	"exports": "./src/mod.ts",
+	"imports": {
+		"@lucide/svelte": "npm:@lucide/svelte",
+		"rune-lab": "npm:rune-lab@0.5.2-rc.2"
+	}
+}

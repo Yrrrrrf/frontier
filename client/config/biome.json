@@ -1,0 +1,33 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.4.15/schema.json",
+	"root": false,
+	"files": {
+		"ignoreUnknown": true,
+		"includes": [
+			"sdk/**",
+			"apps/**",
+			"config/**",
+			"!**/.svelte-kit",
+			"!**/.vite",
+			"!**/dist",
+			"!**/build",
+			"!**/node_modules"
+		]
+	},
+	"html": {
+		"experimentalFullSupportEnabled": true
+	},
+	"css": {
+		"parser": {
+			"tailwindDirectives": true
+		}
+	},
+	"overrides": [
+		{
+			"includes": ["**/paraglide/**", "apps/**/src/app.html"],
+			"linter": {
+				"enabled": false
+			}
+		}
+	]
+}

@@ -1,0 +1,30 @@
+{
+	"compilerOptions": {
+		"lib": ["ESNext", "DOM", "DOM.Iterable", "DOM.AsyncIterable"],
+		"target": "ESNext",
+		"module": "ESNext",
+		"moduleResolution": "bundler",
+		"allowImportingTsExtensions": true,
+		"noEmit": true,
+		"skipLibCheck": true,
+		"strict": true,
+		"checkJs": false,
+		"allowJs": true,
+		"esModuleInterop": true,
+		"forceConsistentCasingInFileNames": true,
+		"resolveJsonModule": true,
+		"paths": {
+			"@sdk": ["../sdk/mod.ts"],
+			"@sdk/*": ["../sdk/*/src/mod.ts"],
+			"#lib": ["./src/lib/mod.ts"],
+			"#lib/*": ["./src/lib/*"]
+		}
+	},
+	"exclude": [
+		".*",
+		"dist/**",
+		"**/*.test.ts",
+		"node_modules",
+		"../sdk/**/*.test.ts"
+	]
+}
