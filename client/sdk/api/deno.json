@@ -1,5 +1,8 @@
 {
 	"name": "@sdk/api",
 	"version": "0.0.1",
-	"exports": "./src/mod.ts"
+	"exports": "./src/mod.ts",
+	"imports": {
+		"axios": "npm:axios@1.20.0"
+	}
 }

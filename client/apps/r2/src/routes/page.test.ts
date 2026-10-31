@@ -4,7 +4,7 @@ import { Counter, faviconUrl, Icon } from "../lib/mod.ts";
 
 describe("Svelte App", () => {
 	it("has valid package metadata and assets", () => {
-		expect(pkg.name).toBe("@apps/minimal");
+		expect(pkg.name).toBe("@apps/r2");
 		expect(typeof faviconUrl).toBe("string");
 		expect(Counter).toBeDefined();
 		expect(Icon).toBeDefined();
