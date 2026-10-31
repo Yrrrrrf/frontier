@@ -15,6 +15,7 @@ secretspec
 temp
 build
 dist
+server/artifacts
 # *.pdf
 
 # ide configuration files 
