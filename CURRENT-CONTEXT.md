@@ -15,7 +15,7 @@ Snapshot: 2026-10-31. This is the current implementation handoff. The official c
 - `client/apps/r2/server/src/http.ts`: native `node:http`, Bearer authentication, official routes, JSON validation, truthful readiness/admission, and an authenticated development-only `GET /tasks/{task_id}/trace` route.
 - `client/apps/r2/server/src/main.ts`: composes the Ollama adapter, noVNC runner, cached local preflight, and persistent trace sink. Chromium and the selected local model must pass preflight before new work is admitted.
 - `client/apps/r2/server/src/service.ts`: RAM task state, background execution, one absolute monotonic deadline, exact-expiry and post-`await` checks, terminal-before-abort, late-result protection, shutdown cancellation, and password redaction.
-- `client/apps/r2/server/src/runner.ts`: a deliberately limited real runner for explicit single-click objectives. It owns bounded login/capture/inference recovery, source-frame/geometry guards, post-click observation, visual closure verification, and cleanup. Unsupported objectives fail before login; it does not claim general task completion.
+- `client/apps/r2/server/src/runner.ts`: a bounded visual runner for click-only objectives, including multi-step recovery. It preserves the original goal and recent step context, can dismiss benign blocking modals, allows up to 8 click attempts and 12 planning iterations, detects repeated goal states, revalidates source-frame/geometry before every click, and requires a separate visual completion check. It does not support text entry or claim general task completion.
 - `client/apps/r2/server/src/vision.ts`: Ollama `/api/chat` with `qwen3-vl:2b` by default. Timeout/cancellation covers headers and body streaming, preserves the first abort cause, bounds response bytes, separates envelope/action failures, and validates dynamic action schemas and coordinates.
 - `client/apps/r2/server/src/vnc.ts`: Playwright controls only the noVNC viewer and remote canvas, never the target application's DOM. Login/capture/input accept deadline/cancellation options; clicks use the exact source frame and geometry, hold for 120 ms, and wait one second. Cleanup is bounded and idempotent.
 
@@ -46,7 +46,7 @@ Generated real evidence remains ignored by Git:
 
 ### Current local validation evidence
 
-- Server `npm run validate`: TypeScript PASS and 30/30 Node tests PASS, including lifecycle/deadline regressions, Ollama header/body aborts, runner guards, trace redaction/bounds/JSONL, authenticated trace reads, and CORS.
+- Server `npm run validate`: TypeScript PASS and 34/34 Node tests PASS, including lifecycle/deadline regressions, Ollama header/body aborts, multi-step modal recovery, stale-coordinate rejection, action bounds, repeated-state protection, trace redaction/bounds/JSONL, authenticated trace reads, and CORS.
 - Client `just cycle`: client tests, six type-check jobs, formatting/lint, and both app builds PASS. r2 has three observability helper tests and zero r2 lint diagnostics.
 - These are mocked/control-flow and UI/build results. No real desktop click, full task, E1, deployment, or unseen-app execution was performed during this implementation.
 
@@ -54,12 +54,12 @@ No desktop password or team token belongs in source, reports, summaries, trace e
 
 ## Next gate
 
-Perform one harmless real action through the composed runner and inspect it in the r2 dashboard:
+Perform the FR-0153 real acceptance flow through the composed runner and inspect it in the r2 dashboard:
 
-1. Start the server with valid local preflight and create an explicit Comercial single-click task through the public API.
-2. Observe fresh login/capture, inference, source-frame and deadline guards, and `side_effect.before` in the task trace.
-3. Execute exactly one click, wait for repaint, and capture the visible menu.
-4. Verify the postcondition separately from screen change, close the desktop session, and retain before/after plus trace evidence.
+1. Start on the new theme with its startup modal and create a Comercial click-only task through the public API.
+2. Observe fresh login/capture, modal dismissal as intermediate progress, renewed inference on the post-modal frame, and source-frame/deadline guards before every input.
+3. Locate the moved/current Comercial control without reusing old coordinates, execute the required click, and capture the visible menu.
+4. Verify the original postcondition separately from modal closure or screen change, close the desktop session, and retain before/after plus trace evidence. Independently mark the new target region; do not reuse or widen the historical rectangle.
 
 Then add text replacement (`Ctrl+A`, then type) and bounded task-specific recovery for E1. Do not claim E1, a complete general agent, public deployment, or unseen-app generalization until those are observed.
 

@@ -123,6 +123,7 @@ Core events:
 - `repaint.waited`
 - `effect.observed`
 - `effect.unknown`
+- `progress.observed`
 
 These claims remain distinct:
 
@@ -130,7 +131,7 @@ These claims remain distinct:
 2. The post-frame hash changed.
 3. A separate visual proposal verified the requested postcondition.
 
-A trace event alone never proves the third claim; the next real acceptance run must retain actual before/after evidence.
+`progress.observed` marks intermediate progress with the original goal still pending, such as dismissing a modal. It includes the action count and whether uncertain input was reconciled through observation. A trace event alone never proves goal completion; the next real acceptance run must retain actual before/after evidence.
 
 ### H. Completion, failure, and cleanup
 
@@ -223,7 +224,7 @@ The first missing/failed boundary localizes investigation. This sequence is curr
 
 Current local evidence:
 
-- Server TypeScript and **30/30 Node tests PASS**, including trace redaction, bounds, JSONL, authenticated reads, CORS, lifecycle, runner, and Ollama transport behavior.
+- Server TypeScript and **34/34 Node tests PASS**, including trace redaction, bounds, JSONL, authenticated reads, CORS, lifecycle, multi-step/modal recovery, action limits, runner, and Ollama transport behavior.
 - Client `just cycle` PASS, including r2 helper tests, type checks, lint, and production build.
 - Real desktop click, full task execution, E1, deployment, and unseen-app generalization remain **NOT_RUN**.
 

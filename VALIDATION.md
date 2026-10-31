@@ -10,7 +10,7 @@ npm install
 npm run validate
 ```
 
-This runs TypeScript checks and 30 Node tests covering the HTTP contract, readiness, task lifecycle/deadlines, runner guards, Ollama transport/envelope handling, and trace sanitization/bounds/persistence/CORS. Injected fetch/runner/desktop tests are mock control-flow evidence only.
+This runs TypeScript checks and 34 Node tests covering the HTTP contract, readiness, task lifecycle/deadlines, multi-step/modal runner recovery, stale-frame and action-budget guards, Ollama transport/envelope handling, and trace sanitization/bounds/persistence/CORS. Injected fetch/runner/desktop tests are mock control-flow evidence only.
 
 ```sh
 cd client
@@ -80,7 +80,7 @@ This validates observability mechanics only. A trace showing a proposed or sent 
 
 Local checks during this implementation:
 
-- Server TypeScript and 30/30 Node tests: PASS.
+- Server TypeScript and 34/34 Node tests: PASS.
 - Client `just cycle`, including r2 tests/type-check/build: PASS.
 - Real click, real end-to-end task, and E1: NOT_RUN.
 
@@ -92,4 +92,4 @@ Historical real evidence, not rerun during this implementation:
 
 ## Next acceptance check
 
-The next real validation must use the composed runner through the public API and show a fresh capture, a valid model proposal, a guarded click on Comercial, a fresh capture displaying its visible effect, and the corresponding authenticated r2 trace. Mock success and trace events alone must not be substituted for this result. After that, run E1 through the public API and verify it with the official practice-only `/__check` endpoint.
+The next real validation must use the new theme through the public API and show its startup modal being dismissed as intermediate progress, renewed visual inference on the post-modal frame, a guarded click on the moved/current Comercial control, and a fresh capture displaying the visible menu with the corresponding authenticated r2 trace. The new target needs an independently marked reference; do not reuse or widen the historical rectangle. Mock success, synthetic frame transitions, and trace events alone must not be substituted for this result. After that, run E1 through the public API and verify it with the official practice-only `/__check` endpoint.

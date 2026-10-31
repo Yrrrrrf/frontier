@@ -1,6 +1,6 @@
 # Frontier
 
-Frontier Reto 2 prototype: a Node/TypeScript desktop agent with noVNC transport, local Ollama vision, guarded single-click execution, sanitized task tracing, and a live Svelte observability dashboard.
+Frontier Reto 2 prototype: a Node/TypeScript desktop agent with noVNC transport, local Ollama vision, guarded multi-step click execution and modal recovery, sanitized task tracing, and a live Svelte observability dashboard.
 
 ## Current layout
 
@@ -27,4 +27,4 @@ cd ../../..
 just cycle
 ```
 
-Current local results: **30/30 server tests PASS** and the complete client cycle PASS. Real desktop click, full task execution, and E1 remain **NOT_RUN**; see the handoff documents before treating the prototype as a complete agent.
+Current local results: **34/34 server tests PASS** and the complete client cycle PASS. Real desktop click, full task execution, and E1 remain **NOT_RUN**; see the handoff documents before treating the prototype as a complete agent.

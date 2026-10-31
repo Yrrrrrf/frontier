@@ -15,7 +15,7 @@ El servidor vive en `client/apps/r2/server`. Se conservaron:
 - Operación por píxeles del canvas noVNC, sin DOM ni APIs internas de SIGECOM.
 - Acciones internas `click`, `finish`, `fail`; visión permanece libre de efectos laterales.
 
-El runner actual es deliberadamente limitado: admite objetivos explícitos de **un solo clic visible**. Otros objetivos fallan antes de iniciar sesión. No es todavía un agente general para E1 ni para aplicaciones desconocidas.
+El runner actual admite objetivos ejecutables mediante **clics visibles y varios pasos acotados**. Conserva el objetivo original y el historial reciente, puede cerrar modales benignos como progreso intermedio y continúa hasta verificar la postcondición original. No admite escritura de texto ni es todavía un agente general para E1 o aplicaciones desconocidas.
 
 ## 2. Arquitectura implementada
 
@@ -25,7 +25,7 @@ El runner actual es deliberadamente limitado: admite objetivos explícitos de **
 | `client/apps/r2/server/src/main.ts` | Composición real de Ollama, noVNC, runner, preflight y `MemoryTraceSink` persistente |
 | `client/apps/r2/server/src/http.ts` | Auth, validación, readiness/admisión, rutas oficiales, trazas autenticadas y CORS explícito para r2 |
 | `client/apps/r2/server/src/service.ts` | Estado RAM, deadline absoluto, cancelación, transición terminal única y resultados tardíos descartados |
-| `client/apps/r2/server/src/runner.ts` | Bucle limitado de login/captura/inferencia/guard/clic/observación/verificación/cleanup |
+| `client/apps/r2/server/src/runner.ts` | Bucle acotado de login/captura/inferencia/guard/clic/observación/verificación/cleanup, con recuperación de modales y hasta 8 acciones/12 iteraciones |
 | `client/apps/r2/server/src/vision.ts` | Transporte Ollama acotado, lectura streaming, clasificación de errores y validación de acciones |
 | `client/apps/r2/server/src/vnc.ts` | Driver noVNC con señal/deadline, geometría de frame fuente, clic y cleanup idempotente |
 | `client/apps/r2/server/src/trace.ts` | Eventos correlacionados, metadata, redacción por tarea, memoria acotada y JSONL |
@@ -79,7 +79,9 @@ Política actual de inferencia: máximo dos llamadas por propuesta cuando el err
 
 | Frontera | Política implementada |
 | --- | --- |
-| Objetivo no compatible | Falla antes de login; no simula trabajo |
+| Objetivo que requiere inputs no implementados | El modelo solo puede proponer `click`, `finish` o `fail`; debe fallar honestamente si no hay paso visible seguro |
+| Progreso intermedio/modal | Registra `progress.observed`, conserva contexto y continúa sin marcar éxito por cerrar el modal |
+| Ausencia de progreso | Detiene estados de objetivo repetidos y aplica máximo 8 acciones/12 iteraciones sin reiniciar el deadline |
 | Login noVNC | Hasta dos intentos solo cuando el error de transporte es recuperable; credenciales fallidas no se insisten ciegamente |
 | Captura | Hasta dos intentos; registra dimensiones/hash y evita inferencia sin frame válido |
 | Inferencia | Máximo dos llamadas según taxonomía de error y budget restante |
@@ -120,7 +122,7 @@ just cycle
 Resultados:
 
 - TypeScript del servidor: **PASS**.
-- Node tests: **30/30 PASS**.
+- Node tests: **34/34 PASS**.
 - Client tests, seis trabajos de tipos, lint/formato y builds de ambas apps: **PASS**.
 - r2 lint: **0 errores y 0 warnings**.
 - `git diff --check`: **PASS**.
@@ -136,6 +138,7 @@ Evidencia real histórica, no repetida durante esta implementación:
 
 Siguen **NOT_RUN**:
 
+- Ejecución real sobre el tema nuevo de FR-0153, incluido modal → Comercial.
 - Clic real guardado y verificado.
 - Tarea completa mediante API pública.
 - E1 y escritura con `Ctrl+A` seguido de texto.
