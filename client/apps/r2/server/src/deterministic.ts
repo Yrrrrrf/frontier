@@ -42,6 +42,23 @@ interface Options {
 
 const normalize = (value: string) =>
 	value.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
+function editDistance(left: string, right: string): number {
+	const row = Array.from({ length: right.length + 1 }, (_, index) => index);
+	for (let i = 1; i <= left.length; i++) {
+		let previous = row[0]!;
+		row[0] = i;
+		for (let j = 1; j <= right.length; j++) {
+			const saved = row[j]!;
+			row[j] = Math.min(
+				row[j]! + 1,
+				row[j - 1]! + 1,
+				previous + (left[i - 1] === right[j - 1] ? 0 : 1),
+			);
+			previous = saved;
+		}
+	}
+	return row[right.length]!;
+}
 function wordsFromHints(hints: string, width: number, height: number): Word[] {
 	const words: Word[] = [];
 	for (const line of hints.split(/\r?\n/)) {
@@ -87,8 +104,14 @@ export function createDeterministicTaskRunner(options: Options): TaskRunner {
 			const desktop = owned as DeterministicDesktop;
 			if (!desktop.replaceText || !desktop.chooseText)
 				throw new Error("El escritorio no admite los inputs requeridos.");
+			let captureIndex = 0;
 			const observe = async (): Promise<Observation> => {
-				const frame = await desktop.capture(undefined, operation());
+				const frame = await desktop.capture(
+					process.env.FRONTIER_CAPTURE_STEPS
+						? `artifacts/practice-frames/${execution.id}-${String(++captureIndex).padStart(3, "0")}.png`
+						: undefined,
+					operation(),
+				);
 				const hints = await options.readText(frame.png, {
 					...operation(10_000),
 					timeoutMs: 10_000,
@@ -99,9 +122,24 @@ export function createDeterministicTaskRunner(options: Options): TaskRunner {
 					hash: createHash("sha256").update(frame.png).digest("hex"),
 				};
 			};
-			const find = (observation: Observation, text: string) => {
-				const wanted = normalize(text);
-				return observation.words.find((word) => normalize(word.text) === wanted);
+			const find = (observation: Observation, text: string): Word | undefined => {
+				const lookup = (value: string) => normalize(value).replace(/[^a-z0-9]/g, "");
+				const wanted = lookup(text);
+				const candidates = [...observation.words].sort((a, b) => a.y - b.y || a.x - b.x);
+				const found = candidates.find((word) => lookup(word.text) === wanted) ??
+					(wanted.length >= 4 && !/\d/.test(wanted)
+						? candidates.find((word) => editDistance(lookup(word.text), wanted) <= 1)
+						: undefined);
+				if (found) return found;
+				if (wanted === "filtrar") {
+					const clear = candidates.find((word) => lookup(word.text) === "limpiar");
+					if (clear) return { text, x: clear.x - 80, y: clear.y };
+				}
+				if (wanted === "aplicar") {
+					const close = candidates.find((word) => editDistance(lookup(word.text), "cerrar") <= 1);
+					if (close) return { text, x: close.x + 75, y: close.y };
+				}
+				return undefined;
 			};
 			const requireWord = (observation: Observation, text: string) => {
 				const word = find(observation, text);
@@ -111,11 +149,18 @@ export function createDeterministicTaskRunner(options: Options): TaskRunner {
 					);
 				return word;
 			};
-			const click = async (observation: Observation, text: string) => {
+			const staleFrame = (error: unknown) =>
+				error instanceof Error && /frame changed before input/i.test(error.message);
+			const click = async (observation: Observation, text: string, attempt = 0): Promise<Observation> => {
 				const word = requireWord(observation, text);
 				step("click", text);
-				await desktop.click(observation, word.x, word.y, operation());
-				return observe();
+				try {
+					await desktop.click(observation, word.x, word.y, operation());
+					return observe();
+				} catch (error) {
+					if (attempt < 3 && staleFrame(error)) return click(await observe(), text, attempt + 1);
+					throw error;
+				}
 			};
 			const pointBelow = (observation: Observation, label: string, dx = 80, dy = 24) => {
 				const word = requireWord(observation, label);
@@ -127,11 +172,48 @@ export function createDeterministicTaskRunner(options: Options): TaskRunner {
 				text: string,
 				dx = 80,
 				dy = 24,
-			) => {
+				attempt = 0,
+			): Promise<Observation> => {
 				const point = pointBelow(observation, label, dx, dy);
 				step("replace_text", label);
-				await desktop.replaceText(observation, point.x, point.y, text, operation());
-				return observe();
+				try {
+					await desktop.replaceText(observation, point.x, point.y, text, operation());
+					return observe();
+				} catch (error) {
+					if (attempt < 3 && staleFrame(error))
+						return replace(await observe(), label, text, dx, dy, attempt + 1);
+					throw error;
+				}
+			};
+			const replaceAt = async (
+				observation: Observation,
+				x: number,
+				y: number,
+				text: string,
+				label: string,
+				attempt = 0,
+			): Promise<Observation> => {
+				step("replace_text", label);
+				try {
+					await desktop.replaceText(observation, x, y, text, operation());
+					return observe();
+				} catch (error) {
+					if (attempt < 3 && staleFrame(error))
+						return replaceAt(await observe(), x, y, text, label, attempt + 1);
+					throw error;
+				}
+			};
+			const apply = async (observation: Observation, attempt = 0): Promise<Observation> => {
+				if (find(observation, "Aplicar")) return click(observation, "Aplicar");
+				const close = requireWord(observation, "Cerrar");
+				step("click", "Aplicar (button fallback)");
+				try {
+					await desktop.click(observation, close.x + 75, close.y, operation());
+					return observe();
+				} catch (error) {
+					if (attempt < 3 && staleFrame(error)) return apply(await observe(), attempt + 1);
+					throw error;
+				}
 			};
 			const choose = async (
 				observation: Observation,
@@ -139,11 +221,18 @@ export function createDeterministicTaskRunner(options: Options): TaskRunner {
 				text: string,
 				dx = 80,
 				dy = 24,
-			) => {
+				attempt = 0,
+			): Promise<Observation> => {
 				const point = pointBelow(observation, label, dx, dy);
 				step("choose", `${label}=${text}`);
-				await desktop.chooseText(observation, point.x, point.y, text, operation());
-				return observe();
+				try {
+					await desktop.chooseText(observation, point.x, point.y, text, operation());
+					return observe();
+				} catch (error) {
+					if (attempt < 3 && staleFrame(error))
+						return choose(await observe(), label, text, dx, dy, attempt + 1);
+					throw error;
+				}
 			};
 			let screen = await observe();
 			if (find(screen, "Entendido")) screen = await click(screen, "Entendido");
@@ -170,10 +259,20 @@ export function createDeterministicTaskRunner(options: Options): TaskRunner {
 				await openClients();
 				screen = await click(screen, "Crear");
 				screen = await replace(screen, "Razón", name!, 150, 24);
-				screen = await replace(screen, "NIT", nit!, 100, 24);
+				if (find(screen, "NIT")) screen = await replace(screen, "NIT", nit!, 100, 24);
+				else {
+					const phoneLabel = requireWord(screen, "Teléfono");
+					screen = await replaceAt(
+						screen,
+						phoneLabel.x - 450,
+						phoneLabel.y + 24,
+						nit!,
+						"NIT (form fallback)",
+					);
+				}
 				screen = await replace(screen, "Teléfono", phone!, 100, 24);
 				screen = await choose(screen, "Ciudad", city!, 100, 24);
-				screen = await click(screen, "Aplicar");
+				screen = await apply(screen);
 				step("completed", "create_client");
 				return `Cliente ${name} registrado con NIT ${nit}, teléfono ${phone} y ciudad ${city}.`;
 			}
@@ -184,7 +283,7 @@ export function createDeterministicTaskRunner(options: Options): TaskRunner {
 				await filterClient(name!);
 				screen = await click(screen, "CL-0007");
 				screen = await replace(screen, "Dirección", address!, 100, 24);
-				screen = await click(screen, "Aplicar");
+				screen = await apply(screen);
 				step("completed", "update_address");
 				return `Dirección de ${name} actualizada a ${address}.`;
 			}
@@ -207,7 +306,7 @@ export function createDeterministicTaskRunner(options: Options): TaskRunner {
 				}
 				screen = await click(screen, codes[0]!.text);
 				screen = await replace(screen, "Teléfono", phone!, 100, 24);
-				screen = await click(screen, "Aplicar");
+				screen = await apply(screen);
 				return `Teléfono de ${name} actualizado a ${phone}.`;
 			}
 			match = /^¿Cuántas facturas vencidas tiene (.+)\?$/i.exec(task);

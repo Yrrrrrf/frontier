@@ -1,8 +1,9 @@
 import { fileURLToPath } from "node:url";
 import { createAgentServer } from "./http.ts";
-import { createLocalReadiness, loginNoVnc } from "./runner.ts";
+import { loginNoVnc } from "./runner.ts";
+import { createDeterministicReadiness } from "./readiness.ts";
 import { createDeterministicTaskRunner } from "./deterministic.ts";
-import { createTesseractTextExtractor } from "./ocr.ts";
+import { createRobustTextExtractor } from "./ocr.ts";
 import { MemoryTraceSink } from "./trace.ts";
 
 const token = process.env.TEAM_TOKEN;
@@ -10,8 +11,7 @@ if (!token) throw new Error("TEAM_TOKEN must be configured");
 const port = Number(process.env.PORT ?? 3000);
 if (!Number.isInteger(port) || port < 0 || port > 65_535)
 	throw new Error("PORT must be a valid TCP port");
-const baseUrl = process.env.OLLAMA_BASE_URL ?? "http://127.0.0.1:11434";
-const model = process.env.VISION_MODEL ?? "qwen3-vl:2b";
+const model = "deterministic-ocr";
 const executablePath = process.env.CHROMIUM_EXECUTABLE;
 const tesseractExecutable = process.env.TESSERACT_EXECUTABLE;
 const uiOrigins = (
@@ -21,9 +21,8 @@ const uiOrigins = (
 	.split(",")
 	.map((origin) => origin.trim())
 	.filter(Boolean);
-const readiness = createLocalReadiness({
-	baseUrl,
-	model,
+const readiness = createDeterministicReadiness({
+	tesseractExecutable: tesseractExecutable ?? "tesseract",
 	...(executablePath ? { executablePath } : {}),
 });
 const traces = new MemoryTraceSink({
@@ -31,7 +30,7 @@ const traces = new MemoryTraceSink({
 });
 const runner = createDeterministicTaskRunner({
 	login: loginNoVnc,
-	readText: createTesseractTextExtractor(tesseractExecutable ?? "tesseract"),
+	readText: createRobustTextExtractor(tesseractExecutable ?? "tesseract"),
 	...(executablePath ? { executablePath } : {}),
 });
 const { server } = createAgentServer({

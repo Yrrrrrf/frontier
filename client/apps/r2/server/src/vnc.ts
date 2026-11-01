@@ -8,6 +8,7 @@ import {
 	type Page,
 } from "playwright-core";
 import { pngDimensions } from "./png.ts";
+import { differsOnlyByCaret } from "./frame-guard.ts";
 
 export interface DesktopOperationOptions {
 	signal?: AbortSignal;
@@ -120,13 +121,12 @@ async function bounded<T>(
 }
 
 function sameFrame(left: DesktopFrame, right: DesktopFrame): boolean {
+	if (left.width !== right.width || left.height !== right.height) return false;
 	if (
-		left.width !== right.width ||
-		left.height !== right.height ||
-		left.png.byteLength !== right.png.byteLength
-	)
-		return false;
-	return timingSafeEqual(Buffer.from(left.png), Buffer.from(right.png));
+		left.png.byteLength === right.png.byteLength &&
+		timingSafeEqual(Buffer.from(left.png), Buffer.from(right.png))
+	) return true;
+	return differsOnlyByCaret(left.png, right.png);
 }
 
 /** Controls only the noVNC transport UI and its pixels, never the target app's DOM. */
@@ -334,6 +334,33 @@ export class NoVncDesktop {
 		}
 	}
 
+	async #typeRemote(text: string, options: DesktopOperationOptions): Promise<void> {
+		// keyboard.type uses insertText for accents: noVNC only forwards keyboard
+		// events, so accented characters must instead have explicit keydown/up.
+		await this.#effect(async () => {
+			for (const character of text) {
+				if (options.signal?.aborted) throw new Error("Desktop typing was cancelled");
+				if (character.codePointAt(0)! > 127) {
+					const session = await this.context.newCDPSession(this.page);
+					try {
+						await session.send("Input.dispatchKeyEvent", {
+							type: "keyDown",
+							key: character,
+							text: character,
+							unmodifiedText: character,
+						});
+						await session.send("Input.dispatchKeyEvent", {
+							type: "keyUp",
+							key: character,
+						});
+					} finally {
+						await session.detach();
+					}
+				} else await this.page.keyboard.type(character, { delay: 15 });
+			}
+		}, options);
+	}
+
 	async chooseText(
 		frame: DesktopFrame,
 		x: number,
@@ -348,8 +375,10 @@ export class NoVncDesktop {
 		});
 		await this.click(frame, x, y, remaining());
 		try {
-			await this.#effect(() => this.page.keyboard.type(text), remaining());
-			await this.#effect(() => this.page.keyboard.press("Enter"), remaining());
+			await this.#effect(() => this.page.keyboard.press("Home"), remaining());
+			await this.#typeRemote(text, remaining());
+			// Tab commits a native selection without submitting its containing form.
+			await this.#effect(() => this.page.keyboard.press("Tab"), remaining());
 			await this.#run(
 				() => new Promise<void>((resolve) => setTimeout(resolve, 1_000)),
 				remaining(),
@@ -373,14 +402,17 @@ export class NoVncDesktop {
 		});
 		await this.click(frame, x, y, remaining());
 		try {
-			await this.#effect(
-				() => this.page.keyboard.press("Control+A"),
-				remaining(),
-			);
-			await this.#effect(
-				() => this.page.keyboard.type(text, { delay: 20 }),
-				remaining(),
-			);
+			await this.#effect(async () => {
+				await this.page.keyboard.down("Control");
+				try {
+					await this.page.keyboard.press("a", { delay: 120 });
+				} finally {
+					await this.page.keyboard.up("Control");
+				}
+				await this.page.keyboard.press("Backspace", { delay: 120 });
+			}, remaining());
+			await this.#run(() => new Promise<void>((resolve) => setTimeout(resolve, 150)), remaining());
+			await this.#typeRemote(text, remaining());
 			await this.#run(
 				() => new Promise<void>((resolve) => setTimeout(resolve, 1_000)),
 				remaining(),

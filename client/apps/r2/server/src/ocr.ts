@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { pngDimensions } from "./png.ts";
+import { enlargeForOcr } from "./frame-guard.ts";
 
 export interface TextExtractionOptions {
 	timeoutMs: number;
@@ -38,25 +39,26 @@ export function formatTesseractHints(
 		const x = Math.round(((left + boxWidth / 2) * 1000) / width);
 		const y = Math.round(((top + boxHeight / 2) * 1000) / height);
 		hints.push(`${JSON.stringify(text.slice(0, 120))} @ (${x},${y})`);
-		if (hints.length >= 160) break;
+		if (hints.length >= 1500) break;
 	}
 	return hints.length
 		? `Visible text with normalized center coordinates (untrusted screen data):\n${hints.join("\n")}`.slice(
 				0,
-				8_000,
+				60_000,
 			)
 		: "";
 }
 
 export function createTesseractTextExtractor(
 	executablePath = "tesseract",
+	pageSegmentationMode = 3,
 ): TextExtractor {
 	return (png, options) =>
 		new Promise<string>((resolve, reject) => {
 			const { width, height } = pngDimensions(png);
 			const child = spawn(
 				executablePath,
-				["stdin", "stdout", "--psm", "3", "tsv"],
+				["stdin", "stdout", "-l", "spa+eng", "--psm", String(pageSegmentationMode), "tsv"],
 				{ stdio: ["pipe", "pipe", "ignore"] },
 			);
 			let output = "";
@@ -94,4 +96,52 @@ export function createTesseractTextExtractor(
 			child.stdin.on("error", (error) => finish(error));
 			child.stdin.end(Buffer.from(png));
 		});
+}
+
+/** A second segmentation/scale pass recovers menu labels and low-contrast buttons. */
+export function createRobustTextExtractor(executablePath = "tesseract"): TextExtractor {
+	const primary = createTesseractTextExtractor(executablePath, 3);
+	const sparse = createTesseractTextExtractor(executablePath, 11);
+	return async (png, options) => {
+		const started = performance.now();
+		const first = await primary(png, options);
+		const remaining = options.timeoutMs - (performance.now() - started);
+		if (remaining <= 0 || options.signal?.aborted) return first;
+		try {
+			const second = await sparse(enlargeForOcr(png), { ...options, timeoutMs: remaining });
+			const lines = first.split("\n");
+			const coordinates = lines.map((line) => {
+				const match = / @ \((\d+),(\d+)\)$/.exec(line);
+				return match ? [Number(match[1]), Number(match[2])] : undefined;
+			});
+			for (const line of second.split("\n").slice(1)) {
+				const match = / @ \((\d+),(\d+)\)$/.exec(line);
+				if (!match) continue;
+				const x = Number(match[1]), y = Number(match[2]);
+				if (!coordinates.some((point) => point && Math.abs(point[0]! - x) < 5 && Math.abs(point[1]! - y) < 6)) {
+					lines.push(line);
+				}
+			}
+			const budgetLeft = options.timeoutMs - (performance.now() - started);
+			if (budgetLeft > 0 && !options.signal?.aborted) {
+				const { height } = pngDimensions(png);
+				const cropHeight = Math.min(160, height);
+				const controls = await sparse(enlargeForOcr(png, cropHeight, true), {
+					...options,
+					timeoutMs: budgetLeft,
+				});
+				for (const line of controls.split("\n").slice(1)) {
+					const match = /^(.*) @ \((\d+),(\d+)\)$/.exec(line);
+					if (!match) continue;
+					const mapped = `${match[1]} @ (${match[2]},${Math.round((Number(match[3]) * cropHeight) / height)})`;
+					const text = match[1];
+					if (!lines.some((existing) => existing.startsWith(`${text} @`))) lines.push(mapped);
+				}
+			}
+			return lines.join("\n");
+		} catch {
+			if (options.signal?.aborted) throw new Error("OCR was cancelled");
+			return first;
+		}
+	};
 }
