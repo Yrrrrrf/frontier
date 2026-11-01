@@ -6,8 +6,7 @@ import type {
 
 const ROW_Y_TOLERANCE = 8;
 const MAX_PAGES = 100;
-const INVOICE_ID = /^FV-\d+$/i;
-const DATE = /^\d{2}\/\d{2}\/\d{4}$/;
+const INVOICE_ID = /^[FE][V¥Y]-?\d+$/i;
 const KNOWN_STATES = new Set(["vencida", "pendiente", "pagada", "anulada"]);
 
 interface InvoiceRow {
@@ -53,36 +52,44 @@ function requireInvoiceTable(observation: WorkflowObservation): void {
 }
 
 function readInvoiceRows(observation: WorkflowObservation): InvoiceRow[] {
-	return observation.words
-		.filter((word) => INVOICE_ID.test(word.text))
-		.map((code) => {
-			const words = rowWords(observation, code);
-			const dates = words.filter((word) => DATE.test(word.text));
-			const issued = dates[0];
-			const due = dates[1];
-			if (!issued || !due) {
-				throw new Error(
-					`No se pudieron leer las fechas de la factura visible ${code.text}.`,
-				);
-			}
+	const header = observation.words.find((word) => normalize(word.text) === "codigo");
+	if (!header) throw new Error("No se encontró la cabecera de facturas.");
+	const headers = rowWords(observation, header);
+	const clientHeader = headers.find((word) => normalize(word.text) === "cliente");
+	const dateHeader = headers.find((word) => normalize(word.text) === "fecha");
+	const stateHeader = headers.find((word) => normalize(word.text) === "estado");
+	if (!clientHeader || !dateHeader || !stateHeader) throw new Error("No se pudieron medir las columnas de facturas.");
+	const anchors = observation.words.filter((word) => word.y > header.y + 12 && Math.abs(word.x - stateHeader.x) < 100 && KNOWN_STATES.has(normalize(word.text)));
+	const rows: InvoiceRow[] = [];
+	const seenY: number[] = [];
+	for (const anchor of anchors) {
+		if (seenY.some((y) => Math.abs(y - anchor.y) <= ROW_Y_TOLERANCE)) continue;
+		seenY.push(anchor.y);
+		const words = rowWords(observation, anchor);
+		const client = words.filter((word) => word.x >= clientHeader.x - 28 && word.x < dateHeader.x - 24).map((word) => word.text).join(" ");
+		const state = normalize(anchor.text);
+		if (state !== "vencida") throw new Error(`El filtro Vencida no quedó aplicado: aparece ${anchor.text}.`);
+		const code = words.find((word) => word.x < clientHeader.x - 28 && INVOICE_ID.test(word.text.replace(/[—–]/g, "-")));
+		const cells = words.filter((word) => word.x >= dateHeader.x - 24).map((word) => normalize(word.text)).join("|");
+		const visibleCode = code?.text.toUpperCase().replace(/[—–]/g, "-");
+		const fallbackCode = words.filter((word) => word.x < clientHeader.x - 28).map((word) => word.text).join("");
+		if (!client) throw new Error("Una factura visible no tiene cliente legible.");
+		rows.push({ id: `${visibleCode ?? fallbackCode}|${cells}`, client, state });
+	}
+	return rows;
+}
 
-			const client = words
-				.filter((word) => word.x > code.x && word.x < issued.x)
-				.map((word) => word.text)
-				.join(" ");
-			const state = normalize(words.at(-1)?.text ?? "");
-			if (!client || !KNOWN_STATES.has(state)) {
-				throw new Error(
-					`No se pudo verificar el cliente y estado de la factura visible ${code.text}.`,
-				);
-			}
-			if (state !== "vencida") {
-				throw new Error(
-					`El filtro Vencida no quedó aplicado: ${code.text} aparece como ${words.at(-1)?.text}.`,
-				);
-			}
-			return { id: code.text.toUpperCase(), client, state };
-		});
+function sameClient(observed: string, requested: string): boolean {
+	const left = normalize(observed).split(" "), right = normalize(requested).split(" ");
+	if (left.length !== right.length) return false;
+	return left.every((part, index) => {
+		const wanted = right[index]!;
+		if (part === wanted) return true;
+		// Permit a single OCR substitution only in a long token; surnames and
+		// extra words remain exact, so similarly named subsidiaries stay excluded.
+		if (part.length < 8 || part.length !== wanted.length) return false;
+		return [...part].filter((character, i) => character !== wanted[i]).length <= 1;
+	});
 }
 
 export const runE3Workflow: PracticeWorkflow = async (task, driver) => {
@@ -122,7 +129,7 @@ export const runE3Workflow: PracticeWorkflow = async (task, driver) => {
 		visitedPages.add(pageKey);
 
 		for (const row of rows) {
-			if (normalize(row.client) === normalize(requestedClient)) {
+			if (sameClient(row.client, requestedClient)) {
 				invoices.add(row.id);
 			}
 		}

@@ -137,8 +137,8 @@ test("E4 derives status and native month boundaries from the user task", async (
 		"click:Ventas",
 		"click:Pedidos",
 		"choose:Estado=Entregado",
-		"replace:Desde=02/01/2024",
-		"replace:Hasta=02/29/2024",
+		"replace:Desde=01/02/2024",
+		"replace:Hasta=29/02/2024",
 		"click:Filtrar",
 		"click:Exportar",
 	]);

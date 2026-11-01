@@ -28,7 +28,7 @@ export function enlargeForOcr(png: Uint8Array, cropHeight?: number, cleanControl
 			const output = y * (width * 3 + 1) + 1 + x * 3;
 			if (cleanControls) {
 				const isGreen = (index: number) => source.bytes[index + 1]! > source.bytes[index]! * 1.15 && source.bytes[index + 1]! > source.bytes[index + 2]! * 1.05;
-				let value = Math.max(source.bytes[input]!, source.bytes[input + 1]!, source.bytes[input + 2]!) < 165 ? 0 : 255;
+				let value = source.bytes[input]! * 0.299 + source.bytes[input + 1]! * 0.587 + source.bytes[input + 2]! * 0.114 < 165 ? 0 : 255;
 				if (isGreen(input)) value = 255;
 				else if (value === 255) {
 					const sx = Math.floor(x / 2), sy = Math.floor(y / 2);

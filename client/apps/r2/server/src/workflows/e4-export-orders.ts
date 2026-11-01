@@ -67,9 +67,9 @@ function parseTask(task: string): ExportOrdersTask {
 		status,
 		fromIso: `${match[3]}-${monthText}-01`,
 		toIso: `${match[3]}-${monthText}-${lastDay}`,
-		// Chromium's native date control accepts the visible US-locale segments.
-		fromNative: `${monthText}/01/${match[3]}`,
-		toNative: `${monthText}/${lastDay}/${match[3]}`,
+		// The observed GUI explicitly requests dd/mm/aaaa; do not use US ordering.
+		fromNative: `01/${monthText}/${match[3]}`,
+		toNative: `${lastDay}/${monthText}/${match[3]}`,
 	};
 }
 
@@ -77,6 +77,27 @@ function observationText(observation: WorkflowObservation): string {
 	return normalize(observation.words.map((word) => word.text).join(" "))
 		.replace(/\s*([/-])\s*/g, "$1")
 		.replace(/\s+/g, " ");
+}
+
+function ocrDateMatches(screen: WorkflowObservation, expected: string, label: string): boolean {
+	const wanted = expected.replace(/\D/g, "");
+	const anchor = screen.words.find((word) => normalize(word.text) === label && word.y < screen.height / 4);
+	if (!anchor) return false;
+	return screen.words.some((word) => {
+		if (Math.abs(word.x - anchor.x) > 100 || word.y < anchor.y + 8 || word.y > anchor.y + 32) return false;
+		const actual = word.text.replace(/[Oo]/g, "0").replace(/\D/g, "");
+		if (!actual.endsWith(wanted.slice(-4)) || actual.length < 8 || actual.length > 10) return false;
+		const row = Array.from({ length: wanted.length + 1 }, (_, index) => index);
+		for (let i = 1; i <= actual.length; i++) {
+			let previous = row[0]!; row[0] = i;
+			for (let j = 1; j <= wanted.length; j++) {
+				const saved = row[j]!;
+				row[j] = Math.min(row[j]! + 1, row[j - 1]! + 1, previous + (actual[i - 1] === wanted[j - 1] ? 0 : 1));
+				previous = saved;
+			}
+		}
+		return row[wanted.length]! <= 2;
+	});
 }
 
 function assertFiltersVisible(
@@ -96,10 +117,11 @@ function assertFiltersVisible(
 	]);
 	const missing: string[] = [];
 	if (!text.includes(normalize(task.status))) missing.push(`estado ${task.status}`);
-	if (![...fromVariants].some((date) => text.includes(normalize(date))))
+	if (![...fromVariants].some((date) => text.includes(normalize(date))) && !ocrDateMatches(observation, task.fromNative, "desde"))
 		missing.push(`fecha Desde ${task.fromNative}`);
-	if (![...toVariants].some((date) => text.includes(normalize(date))))
+	if (![...toVariants].some((date) => text.includes(normalize(date))) && !ocrDateMatches(observation, task.toNative, "hasta"))
 		missing.push(`fecha Hasta ${task.toNative}`);
+	if (/dato\s+invalido|fecha\s+invalida/.test(text)) missing.push("fechas válidas");
 	if (missing.length > 0)
 		throw new Error(
 			`No se pudieron confirmar visualmente los filtros: ${missing.join(", ")}.`,

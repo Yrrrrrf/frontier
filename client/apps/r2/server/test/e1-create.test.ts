@@ -88,6 +88,9 @@ class FakeDriver implements WorkflowDriver {
 				break;
 			case "Filtrar":
 				break;
+			case "Cerrar":
+				this.mode = "clients";
+				break;
 			default:
 				throw new Error(`Unexpected fake click: ${text}`);
 		}
@@ -257,7 +260,7 @@ test("E1 detects dropped Unicode before submit", async () => {
 test("E1 never repeats Apply when the form remains visible", async () => {
 	const driver = new FakeDriver();
 	driver.applyBehavior = "unchanged";
-	await assert.rejects(runE1Workflow(TASK, driver), /no produjo evidencia visible/);
+	await assert.rejects(runE1Workflow(TASK, driver), /guardado no está confirmado/);
 	assert.equal(driver.applyCalls, 1);
 });
 

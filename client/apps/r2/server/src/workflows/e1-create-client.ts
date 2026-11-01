@@ -217,10 +217,10 @@ export const runE1Workflow: PracticeWorkflow = async (task, driver) => {
 
 	// Never retry this operation from the workflow: its effect may be uncertain.
 	screen = await driver.apply(screen);
-	if (driver.find(screen, "Aplicar") || driver.find(screen, "Cerrar")) {
-		throw new Error(
-			"Aplicar no produjo evidencia visible de guardado; no se repetirá el envío.",
-		);
+	if (driver.find(screen, "Cerrar")) {
+		// FR-0153 deliberately keeps the editor open after a successful Apply.
+		// Reopen through the list to verify persistence rather than resubmitting.
+		screen = await driver.click(screen, "Cerrar");
 	}
 	driver.requireWord(screen, "Código");
 

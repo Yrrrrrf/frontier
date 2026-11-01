@@ -102,6 +102,7 @@ export function createTesseractTextExtractor(
 export function createRobustTextExtractor(executablePath = "tesseract"): TextExtractor {
 	const primary = createTesseractTextExtractor(executablePath, 3);
 	const sparse = createTesseractTextExtractor(executablePath, 11);
+	const table = createTesseractTextExtractor(executablePath, 6);
 	return async (png, options) => {
 		const started = performance.now();
 		const first = await primary(png, options);
@@ -136,6 +137,22 @@ export function createRobustTextExtractor(executablePath = "tesseract"): TextExt
 					const mapped = `${match[1]} @ (${match[2]},${Math.round((Number(match[3]) * cropHeight) / height)})`;
 					const text = match[1];
 					if (!lines.some((existing) => existing.startsWith(`${text} @`))) lines.push(mapped);
+				}
+			}
+			const tableBudget = options.timeoutMs - (performance.now() - started);
+			if (tableBudget > 0 && !options.signal?.aborted) {
+				const tableHints = await table(enlargeForOcr(png, undefined, true), { ...options, timeoutMs: tableBudget });
+				for (const line of tableHints.split("\n").slice(1)) {
+					const match = /^("(?:[^"\\]|\\.)*") @ \((\d+),(\d+)\)$/.exec(line);
+					if (!match) continue;
+					const x = Number(match[2]), y = Number(match[3]);
+					const text = JSON.parse(match[1]!) as string;
+					const index = lines.findIndex((candidate) => {
+						const position = / @ \((\d+),(\d+)\)$/.exec(candidate);
+						return position && Math.abs(Number(position[1]) - x) < 6 && Math.abs(Number(position[2]) - y) < 7;
+					});
+					if (index < 0) lines.push(line);
+					else if (/^[A-Za-z¥]{1,3}-\d{4,}$/.test(text) && x < 130) lines[index] = line;
 				}
 			}
 			return lines.join("\n");
