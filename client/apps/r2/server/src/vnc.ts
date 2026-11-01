@@ -334,6 +334,66 @@ export class NoVncDesktop {
 		}
 	}
 
+	async chooseText(
+		frame: DesktopFrame,
+		x: number,
+		y: number,
+		text: string,
+		options: DesktopOperationOptions = {},
+	): Promise<void> {
+		const deadline = performance.now() + (options.timeoutMs ?? 20_000);
+		const remaining = () => ({
+			...(options.signal ? { signal: options.signal } : {}),
+			timeoutMs: Math.max(0, deadline - performance.now()),
+		});
+		await this.click(frame, x, y, remaining());
+		try {
+			await this.#effect(() => this.page.keyboard.type(text), remaining());
+			await this.#effect(() => this.page.keyboard.press("Enter"), remaining());
+			await this.#run(
+				() => new Promise<void>((resolve) => setTimeout(resolve, 1_000)),
+				remaining(),
+			);
+		} catch (error) {
+			throw operationError("Desktop selection effect is uncertain", error, true);
+		}
+	}
+
+	async replaceText(
+		frame: DesktopFrame,
+		x: number,
+		y: number,
+		text: string,
+		options: DesktopOperationOptions = {},
+	): Promise<void> {
+		const deadline = performance.now() + (options.timeoutMs ?? 20_000);
+		const remaining = () => ({
+			...(options.signal ? { signal: options.signal } : {}),
+			timeoutMs: Math.max(0, deadline - performance.now()),
+		});
+		await this.click(frame, x, y, remaining());
+		try {
+			await this.#effect(
+				() => this.page.keyboard.press("Control+A"),
+				remaining(),
+			);
+			await this.#effect(
+				() => this.page.keyboard.type(text, { delay: 20 }),
+				remaining(),
+			);
+			await this.#run(
+				() => new Promise<void>((resolve) => setTimeout(resolve, 1_000)),
+				remaining(),
+			);
+		} catch (error) {
+			throw operationError(
+				"Desktop text replacement effect is uncertain",
+				error,
+				true,
+			);
+		}
+	}
+
 	close(): Promise<void> {
 		this.#closing ??= this.#close();
 		return this.#closing;

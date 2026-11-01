@@ -16,8 +16,8 @@ const CLEANUP_RESERVE_MS = 2_000;
 const MAX_CAPTURE_MS = 20_000;
 const MAX_INFERENCE_MS = 60_000;
 const MAX_LOGIN_MS = 30_000;
-const MAX_ACTIONS = 8;
-const MAX_ITERATIONS = 12;
+const MAX_ACTIONS = 24;
+const MAX_ITERATIONS = 32;
 
 interface Observation extends DesktopFrame {
 	id: string;
@@ -33,6 +33,13 @@ export interface RunnerDesktop {
 		frame: DesktopFrame,
 		x: number,
 		y: number,
+		options?: DesktopOperationOptions,
+	): Promise<void>;
+	replaceText?(
+		frame: DesktopFrame,
+		x: number,
+		y: number,
+		text: string,
 		options?: DesktopOperationOptions,
 	): Promise<void>;
 	close(): Promise<void>;
@@ -268,7 +275,15 @@ export function createDesktopTaskRunner(
 						actionId,
 						details: {
 							kind: action.kind,
-							...(action.kind === "click" ? { x: action.x, y: action.y } : {}),
+							...(action.kind === "click" || action.kind === "replace_text"
+								? {
+										x: action.x,
+										y: action.y,
+										...(action.kind === "replace_text"
+											? { textLength: action.text.length }
+											: {}),
+									}
+								: {}),
 						},
 					});
 					return { action, actionId };
@@ -419,10 +434,34 @@ export function createDesktopTaskRunner(
 					trace?.record({
 						iteration,
 						event: "closure.proposed",
-						status: "rejected",
+						status: "started",
 						frameId: frame.id,
 						actionId,
-						details: { code: "unverified_finish", evidence: action.evidence },
+						details: { code: "verification_required", evidence: action.evidence },
+					});
+					const verification = await propose(frame, "verify_completion");
+					if (verification.action.kind === "finish") {
+						trace?.record({
+							iteration,
+							event: "closure.verified",
+							status: "ok",
+							frameId: frame.id,
+							actionId: verification.actionId,
+							details: { evidence: verification.action.evidence },
+						});
+						return (
+							verification.action.summary ??
+							action.summary ??
+							`Postcondición visual verificada tras ${actionsExecuted} paso(s): ${verification.action.evidence}`
+						);
+					}
+					trace?.record({
+						iteration,
+						event: "closure.verified",
+						status: "rejected",
+						frameId: frame.id,
+						actionId: verification.actionId,
+						details: { code: "unverified_finish" },
 					});
 					throw new Error(
 						"El modelo propuso terminar sin una postcondición visual verificable.",
@@ -499,19 +538,38 @@ export function createDesktopTaskRunner(
 					status: "ok",
 					frameId: frame.id,
 					actionId,
-					details: { kind: "click", x: action.x, y: action.y },
+					details: {
+						kind: action.kind,
+						x: action.x,
+						y: action.y,
+						...(action.kind === "replace_text"
+							? { textLength: action.text.length }
+							: {}),
+					},
 				});
 
 				actionsExecuted++;
 				let clickError: unknown;
 				const inputStartedAt = now();
 				try {
-					await desktop.click(
-						frame,
-						action.x,
-						action.y,
-						operationOptions(MAX_CAPTURE_MS),
-					);
+					if (action.kind === "replace_text") {
+						if (!desktop.replaceText)
+							throw new Error("El escritorio no admite reemplazo de texto.");
+						await desktop.replaceText(
+							frame,
+							action.x,
+							action.y,
+							action.text,
+							operationOptions(MAX_CAPTURE_MS),
+						);
+					} else {
+						await desktop.click(
+							frame,
+							action.x,
+							action.y,
+							operationOptions(MAX_CAPTURE_MS),
+						);
+					}
 				} catch (error) {
 					clickError = error;
 				}
@@ -590,49 +648,6 @@ export function createDesktopTaskRunner(
 						newImageHash: after.hash.slice(0, 16),
 					},
 				});
-				const verification = await propose(after, "verify_completion");
-				if (verification.action.kind === "finish") {
-					trace?.record({
-						iteration,
-						event: "closure.verified",
-						status: "ok",
-						frameId: after.id,
-						actionId: verification.actionId,
-						details: { evidence: verification.action.evidence },
-					});
-					trace?.record({
-						iteration,
-						event: "iteration.completed",
-						status: "ok",
-						durationMs: now() - iterationStartedAt,
-					});
-					return `Acción de clic y postcondición visual verificadas tras ${actionsExecuted} paso(s): ${verification.action.evidence}`;
-				}
-				if (verification.action.kind !== "fail") {
-					trace?.record({
-						iteration,
-						event: "action.rejected",
-						status: "rejected",
-						frameId: after.id,
-						actionId: verification.actionId,
-						details: { code: "invalid_verification_action" },
-					});
-					throw new Error(
-						"La verificación devolvió otra acción en lugar de comprobar el objetivo; no se ejecutó.",
-					);
-				}
-
-				trace?.record({
-					iteration,
-					event: "closure.verified",
-					status: "rejected",
-					frameId: after.id,
-					actionId: verification.actionId,
-					details: {
-						code: "postcondition_pending",
-						reason: verification.action.reason,
-					},
-				});
 				if (seenGoalStates.has(after.hash)) {
 					trace?.record({
 						iteration,
@@ -648,7 +663,7 @@ export function createDesktopTaskRunner(
 				}
 				seenGoalStates.add(after.hash);
 				history.push(
-					`Paso ${actionsExecuted}: clic en (${action.x},${action.y}); se observó una pantalla nueva. Objetivo pendiente: ${verification.action.reason}${clickError ? " El input anterior era incierto y se reconcilió observando; no se reenvió." : ""}`,
+					`Paso ${actionsExecuted}: ${action.kind === "replace_text" ? "reemplazo de texto" : "clic"} en (${action.x},${action.y}); se observó una pantalla nueva. Reevalúa el objetivo original desde este estado.${clickError ? " El input anterior era incierto y se reconcilió observando; no se reenvió." : ""}`,
 				);
 				trace?.record({
 					iteration,

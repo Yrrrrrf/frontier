@@ -1,11 +1,8 @@
 import { fileURLToPath } from "node:url";
 import { createAgentServer } from "./http.ts";
-import {
-	createDesktopTaskRunner,
-	createLocalReadiness,
-	loginNoVnc,
-} from "./runner.ts";
-import { createOllamaVision } from "./vision.ts";
+import { createLocalReadiness, loginNoVnc } from "./runner.ts";
+import { createDeterministicTaskRunner } from "./deterministic.ts";
+import { createTesseractTextExtractor } from "./ocr.ts";
 import { MemoryTraceSink } from "./trace.ts";
 
 const token = process.env.TEAM_TOKEN;
@@ -16,6 +13,7 @@ if (!Number.isInteger(port) || port < 0 || port > 65_535)
 const baseUrl = process.env.OLLAMA_BASE_URL ?? "http://127.0.0.1:11434";
 const model = process.env.VISION_MODEL ?? "qwen3-vl:2b";
 const executablePath = process.env.CHROMIUM_EXECUTABLE;
+const tesseractExecutable = process.env.TESSERACT_EXECUTABLE;
 const uiOrigins = (
 	process.env.FRONTIER_UI_ORIGINS ??
 	"http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:4173,http://localhost:4173"
@@ -31,10 +29,9 @@ const readiness = createLocalReadiness({
 const traces = new MemoryTraceSink({
 	directory: fileURLToPath(new URL("../artifacts/traces/", import.meta.url)),
 });
-const runner = createDesktopTaskRunner({
-	vision: createOllamaVision({ baseUrl, model }),
+const runner = createDeterministicTaskRunner({
 	login: loginNoVnc,
-	model,
+	readText: createTesseractTextExtractor(tesseractExecutable ?? "tesseract"),
 	...(executablePath ? { executablePath } : {}),
 });
 const { server } = createAgentServer({

@@ -20,6 +20,7 @@ class FakeDesktop implements RunnerDesktop {
 	closes = 0;
 	captures = 0;
 	points: Array<{ x: number; y: number }> = [];
+	replacements: Array<{ x: number; y: number; text: string }> = [];
 	clickError?: DesktopOperationError;
 	closeError = false;
 	constructor(private readonly frames: DesktopFrame[]) {}
@@ -33,6 +34,14 @@ class FakeDesktop implements RunnerDesktop {
 		this.clicks++;
 		this.points.push({ x, y });
 		if (this.clickError) throw this.clickError;
+	}
+	async replaceText(
+		_frame: DesktopFrame,
+		x: number,
+		y: number,
+		text: string,
+	): Promise<void> {
+		this.replacements.push({ x, y, text });
 	}
 	async close(): Promise<void> {
 		this.closes++;
@@ -112,10 +121,34 @@ test("runner executes one guarded click and verifies a distinct post-frame", asy
 	});
 	assert.match(
 		await run(execution(() => now)),
-		/postcondición visual verificadas/,
+		/[Pp]ostcondición visual verificada/,
 	);
 	assert.equal(desktop.clicks, 1);
 	assert.equal(desktop.closes, 1);
+});
+
+test("runner replaces field text once and returns the verified public summary", async () => {
+	const desktop = new FakeDesktop([frame(1), frame(1), frame(2)]);
+	const run = createDesktopTaskRunner({
+		vision: visionSequence([
+			{ kind: "replace_text", x: 20, y: 30, text: "Calle 80 # 24-15" },
+			{
+				kind: "finish",
+				evidence: "La dirección visible coincide.",
+				summary: "Dirección actualizada correctamente.",
+			},
+		]),
+		login: async () => desktop,
+		now: () => 0,
+	});
+	assert.equal(
+		await run(execution(() => 0)),
+		"Dirección actualizada correctamente.",
+	);
+	assert.deepEqual(desktop.replacements, [
+		{ x: 20, y: 30, text: "Calle 80 # 24-15" },
+	]);
+	assert.equal(desktop.clicks, 0);
 });
 
 test("a benign modal is dismissed and the original goal continues in the same run", async () => {
@@ -132,7 +165,6 @@ test("a benign modal is dismissed and the original goal continues in the same ru
 		vision: visionSequence(
 			[
 				{ kind: "click", x: 10, y: 10 },
-				{ kind: "fail", reason: "Comercial todavía no está abierto." },
 				{ kind: "click", x: 80, y: 60 },
 				{ kind: "finish", evidence: "Comercial está abierto." },
 			],
@@ -156,14 +188,11 @@ test("a benign modal is dismissed and the original goal continues in the same ru
 	assert.equal(calls.length, 4);
 	assert.ok(calls.every((call) => call.goal === request.tarea));
 	assert.match(calls[0]?.recentContext ?? "", /Decision mode: next_action/);
+	assert.match(calls[1]?.recentContext ?? "", /Paso 1: clic en \(10,10\)/);
+	assert.match(calls[1]?.recentContext ?? "", /Decision mode: next_action/);
 	assert.match(
-		calls[1]?.recentContext ?? "",
+		calls[3]?.recentContext ?? "",
 		/Decision mode: verify_completion/,
-	);
-	assert.match(calls[2]?.recentContext ?? "", /Paso 1: clic en \(10,10\)/);
-	assert.match(
-		calls[2]?.recentContext ?? "",
-		/Comercial todavía no está abierto/,
 	);
 	assert.ok(events.includes("progress.observed"));
 	assert.equal(events.filter((event) => event === "input.executed").length, 2);
@@ -223,7 +252,10 @@ test("model finish without verified postcondition cannot complete a task", async
 	const desktop = new FakeDesktop([frame(1)]);
 	const now = 0;
 	const run = createDesktopTaskRunner({
-		vision: vision({ kind: "finish", evidence: "looks done" }),
+		vision: visionSequence([
+			{ kind: "finish", evidence: "looks done" },
+			{ kind: "fail", reason: "still incomplete" },
+		]),
 		login: async () => desktop,
 		now: () => now,
 	});
@@ -248,23 +280,24 @@ test("click-only goals without a click prefix are supported and cleanup failure 
 			...execution(() => 0),
 			request: { ...request, tarea: "Exporta las facturas pendientes." },
 		}),
-		/verificadas/,
+		/verificada/,
 	);
 	assert.equal(desktop.clicks, 1);
 	assert.equal(desktop.closes, 1);
 });
 
-test("a click returned during completion verification is rejected and never executed", async () => {
+test("a click returned during completion verification is never executed", async () => {
 	const desktop = new FakeDesktop([frame(1), frame(1), frame(2)]);
 	const run = createDesktopTaskRunner({
 		vision: visionSequence([
 			{ kind: "click", x: 80, y: 60 },
+			{ kind: "finish", evidence: "Parece completo." },
 			{ kind: "click", x: 1, y: 1 },
 		]),
 		login: async () => desktop,
 		now: () => 0,
 	});
-	await assert.rejects(run(execution(() => 0)), /no se ejecutó/);
+	await assert.rejects(run(execution(() => 0)), /sin una postcondición/);
 	assert.deepEqual(desktop.points, [{ x: 80, y: 60 }]);
 });
 
@@ -279,9 +312,7 @@ test("returning to an observed goal state stops the loop instead of repeating ac
 	const run = createDesktopTaskRunner({
 		vision: visionSequence([
 			{ kind: "click", x: 10, y: 10 },
-			{ kind: "fail", reason: "Todavía pendiente." },
 			{ kind: "click", x: 20, y: 20 },
-			{ kind: "fail", reason: "Sigue pendiente." },
 		]),
 		login: async () => desktop,
 		now: () => 0,
@@ -292,38 +323,21 @@ test("returning to an observed goal state stops the loop instead of repeating ac
 });
 
 test("the runner enforces its global action budget without resetting the goal or deadline", async () => {
-	const desktop = new FakeDesktop([
-		frame(1),
-		frame(1),
-		frame(2),
-		frame(2),
-		frame(3),
-		frame(3),
-		frame(4),
-		frame(4),
-		frame(5),
-		frame(5),
-		frame(6),
-		frame(6),
-		frame(7),
-		frame(7),
-		frame(8),
-		frame(8),
-		frame(9),
-	]);
+	const desktop = new FakeDesktop(
+		Array.from({ length: 49 }, (_, index) =>
+			frame(Math.floor(index / 2) + 1),
+		),
+	);
 	const actions = Array.from(
-		{ length: 16 },
-		(_, index): Action =>
-			index % 2 === 0
-				? { kind: "click", x: 80, y: 60 }
-				: { kind: "fail", reason: "Objetivo aún pendiente." },
+		{ length: 24 },
+		(): Action => ({ kind: "click", x: 80, y: 60 }),
 	);
 	const run = createDesktopTaskRunner({
 		vision: visionSequence(actions),
 		login: async () => desktop,
 		now: () => 0,
 	});
-	await assert.rejects(run(execution(() => 0)), /límite de 8 acciones/);
-	assert.equal(desktop.clicks, 8);
+	await assert.rejects(run(execution(() => 0)), /límite de 24 acciones/);
+	assert.equal(desktop.clicks, 24);
 	assert.equal(desktop.closes, 1);
 });

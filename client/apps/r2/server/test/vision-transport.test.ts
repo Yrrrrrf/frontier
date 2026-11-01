@@ -138,7 +138,7 @@ test("bad envelopes are invalid_response and bad actions are invalid_action", as
 		"not-json",
 		JSON.stringify({ message: {} }),
 		JSON.stringify({ message: { content: "not-an-action" } }),
-		JSON.stringify({ message: { content: '{"kind":"click","x":2,"y":0}' } }),
+		JSON.stringify({ message: { content: '{"kind":"click","x":1002,"y":0}' } }),
 	];
 	await withOllama(
 		(_request, response) => {
